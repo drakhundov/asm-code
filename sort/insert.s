@@ -56,36 +56,52 @@ STOP:
 @ R4 and R5 are callee-saved, so they are pushed and popped.
 @ All comparisons are unsigned (BHS/BLO/BLS): elements are unsigned words.
 
+@Optimized Insertion Sort.
+
 INSERTION_SORT:
         PUSH {R4, R5}            @ save callee-saved regs we use
-        MOVS R2, #1              @ i = 1 (A[0] alone is already sorted)
+        
+        @ Use memory addresses instead of counters
+        @   to avoid conversion at each step.
+        LSLS R1, R1, #2          @ R1 = n*4
+        ADDS R1, R0, R1          @ R1 = &A[n]
+        ADDS R2, R0, #4          @ R2 = &A[1], i=1
 
         @ Outer loop: insert A[i] into the sorted prefix A[0..i-1]
 OUTER_LOOP:
         CMP  R2, R1              @ i < n ?
         BHS  SORT_DONE           @ i >= n -> whole array sorted
-        LSLS R4, R2, #2          @ byte offset = i * 4 (one word per digit)
-        ADDS R4, R0, R4          @ R4 = &A[i]
-        LDR  R3, [R4]            @ key = A[i]
-        SUBS R4, R4, #4          @ R4 = &A[j], j = i - 1
+
+        LDR  R3, [R2]            @ key = A[i]
+        SUBS R4, R2, #4          @ R4 = &A[j], j = i - 1
+        LDR R5, [R4]             @ R5 = A[j]
+        
+        @ If alredy in order, no shift.
+        @ Use this condition because on average
+        @   array is going to be unordered.
+        CMP R5, R3
+        BLS NEXT_OUTER
 
         @ Inner loop: shift elements greater than key one word right
-INNER_LOOP:
-        CMP  R4, R0              @ j >= 0 ?  (address not below base)
-        BLO  INSERT              @ j < 0 -> ran off the front, insert at A[0]
-        LDR  R5, [R4]            @ R5 = A[j]
+SHIFT_LOOP:
+        STR R5, [R4, #4]         @ A[j + 1] = A[j]
+        CMP  R4, R0              @ j == 0 ?
+        BEQ  INSERT_AT_FRONT     @ A[0] = A[i]
+        SUBS R4, R4, #4          @ ptr_j--
+        LDR R5, [R4]             @ R5 = A[j]
         CMP  R5, R3              @ A[j] > key ?
-        BLS  INSERT              @ A[j] <= key -> slot found (equal digits stay put)
-        STR  R5, [R4, #4]        @ right shift: A[j+1] = A[j]
-        SUBS R4, R4, #4          @ j = j - 1
-        B    INNER_LOOP
+        BHI SHIFT_LOOP
 
-        @ Insertion: the hole is at A[j+1]
-INSERT:
-        STR  R3, [R4, #4]        @ A[j+1] = key
-AFTER_INSERT:                    @ outer iteration i finished; prefix A[0..i] sorted
-        ADDS R2, R2, #1          @ i = i + 1
-        B    OUTER_LOOP
+        @ Found the right place.
+        STR R3, [R4, #4]
+        B NEXT_OUTER
+
+INSERT_AT_FRONT:
+        STR R3, [R0]
+
+NEXT_OUTER:
+        ADDS R2, R2, #4          @ R2 = &A[i++]
+        B OUTER_LOOP
 
 SORT_DONE:
         POP  {R4, R5}            @ restore R4, R5
